@@ -273,7 +273,7 @@ st.markdown("""
         </div>
         <div style="text-align:right; font-family:'Fira Code',monospace; font-size:0.7rem; color:#8a9bb0;
              background:#f5f7fa; border:1px solid #d1d9e6; border-radius:10px; padding:0.8rem 1.1rem;">
-            <div style="font-weight:600; color:#4a5568; font-size:0.75rem;">RS Mitra Keluarga</div>
+            <div style="font-weight:600; color:#4a5568; font-size:0.75rem;">RSUP Persahabatan</div>
             <div>Dep. Urologi</div>
         </div>
     </div>
