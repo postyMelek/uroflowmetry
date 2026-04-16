@@ -1,0 +1,46 @@
+{
+  "model_name": "Model C (Wave+Tab+Cli Full)",
+  "version": "v2",
+  "cv_method": "5-fold-patient-stratified",
+  "mode": "C",
+  "n_epochs": 80,
+  "lr": 0.0005,
+  "dropout": 0.3,
+  "focal_gamma": 2.0,
+  "n_aug": 5,
+  "youden_threshold": 0.5814029574394226,
+  "tabular_features": [
+    "Qmax_ml_s",
+    "Qave_ml_s",
+    "Voided_Volume_ml",
+    "PVR_ml",
+    "Flow_Time_s",
+    "Time_to_Max_Flow_s"
+  ],
+  "clinical_features": [
+    "Total skor IPSS",
+    "Skor Storage",
+    "Skor Voiding",
+    "QoL",
+    "Usia",
+    "Volume Prostat",
+    "IPP",
+    "Diabetes",
+    "Stroke",
+    "Neurology abnormalities"
+  ],
+  "n_cli": null,
+  "label_map": {
+    "0": "Non-BOO (DU)",
+    "1": "BOO"
+  },
+  "input_length": 280,
+  "encoder": "WaveEncoderResidual",
+  "improvements": [
+    "ResidualEncoder",
+    "FocalLoss",
+    "YoudenThreshold",
+    "5FoldPatientCV",
+    "AggressiveAugmentation"
+  ]
+}
