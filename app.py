@@ -1,5 +1,5 @@
 """
-app.py — BESTARIL BOO Streamlit Application
+app.py — NIVA BOO Streamlit Application
 Non-Invasive Bladder Outlet Obstruction Analysis System
 """
 
@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 st.set_page_config(
-    page_title="BESTARIL BOO | AI Analysis",
+    page_title="NIVA-BOO | AI Analysis",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -76,7 +76,7 @@ hr { border-color:var(--border) !important; margin:1.5rem 0 !important; }
 with st.sidebar:
     st.markdown("""
 <div class="sidebar-brand">
-    <div class="sidebar-brand-title">BESTARIL</div>
+    <div class="sidebar-brand-title">NIVA-BOO</div>
     <div class="sidebar-brand-sub">BOO Detection System</div>
     <div class="sidebar-engine-badge">&#9889; Engine v2.0</div>
 </div>
@@ -132,7 +132,7 @@ st.markdown("""
                  background:rgba(34,197,94,0.12); border:1px solid rgba(34,197,94,0.3); border-radius:20px;
                  font-size:0.65rem; letter-spacing:0.1em; text-transform:uppercase; color:#22c55e;
                  font-family:'JetBrains Mono',monospace; margin-top:0.8rem;">
-                &#9679; BESTARIL Engine v2.0 &middot; Model C (AUC 0.856) Primary
+                &#9679; NIVA Engine v2.0 &middot; Model C (AUC 0.856) Primary
             </div>
         </div>
         <div style="text-align:right; font-family:'JetBrains Mono',monospace; font-size:0.65rem; color:#475569;">
@@ -331,7 +331,7 @@ with col_ipss:
 st.markdown("<br>", unsafe_allow_html=True)
 _, col_btn, _ = st.columns([1, 2, 1])
 with col_btn:
-    run_analysis = st.button("&#9889; PROSES ANALISIS BESTARIL-BOO", type="primary",
+    run_analysis = st.button("&#9889; PROSES ANALISIS NIVA-BOO", type="primary",
                               use_container_width=True, disabled=not waveform_ready)
     if not waveform_ready:
         st.markdown('<div style="text-align:center; font-size:0.72rem; color:#475569; margin-top:0.3rem;">Upload PDF Uroflowmetry untuk mengaktifkan analisis</div>', unsafe_allow_html=True)
@@ -418,7 +418,7 @@ if run_analysis and waveform_ready:
     else:
         uds_bg    = "rgba(34,197,94,0.08)";  uds_bd     = "rgba(34,197,94,0.3)"
         uds_icon  = "&#9989;";               uds_lbl_cl = "#22c55e"
-        uds_title = "Data BESTARIL Cukup Meyakinkan"; uds_title_cl = "#4ade80"
+        uds_title = "Data NIVA-BOO Cukup Meyakinkan"; uds_title_cl = "#4ade80"
         uds_body  = "Untuk saat ini prosedur invasif dapat ditunda berdasarkan confidence analisis."
 
     # ── Warning jika data kosong ──────────────────────────────────────────────
@@ -474,7 +474,7 @@ if run_analysis and waveform_ready:
         st.markdown(f"""
 <div style="background:#111827; border:1px solid {border_color}; border-radius:14px; padding:1.2rem 1.5rem; margin-bottom:0.8rem;">
     <div style="font-family:'JetBrains Mono',monospace; font-size:0.6rem; letter-spacing:0.2em; text-transform:uppercase; color:#64748b; margin-bottom:0.5rem;">
-        Interpretasi BESTARIL
+        Interpretasi NIVA-BOO
     </div>
     <div style="font-family:'DM Serif Display',serif; font-size:1.2rem; color:{boo_color}; margin-bottom:0.5rem;">
         {interp_title}
@@ -533,7 +533,7 @@ if run_analysis and waveform_ready:
     <div style="display:flex; justify-content:space-between; align-items:center;">
         <div>
             <div style="font-family:'JetBrains Mono',monospace; font-size:0.6rem; letter-spacing:0.2em; text-transform:uppercase; color:#64748b; margin-bottom:0.3rem;">
-                Laporan Analisis BESTARIL-BOO
+                Laporan Analisis NIVA-BOO
             </div>
             <div style="font-family:'DM Serif Display',serif; font-size:1.3rem;">
                 Non-Invasive Analysis for Bladder Outlet Obstruction
@@ -561,7 +561,7 @@ if run_analysis and waveform_ready:
             <div style="font-size:0.7rem; color:#64748b; margin-top:0.2rem;">PVR: {pvr} mL</div>
         </div>
         <div>
-            <div style="font-family:'JetBrains Mono',monospace; font-size:0.6rem; letter-spacing:0.2em; text-transform:uppercase; color:#64748b; margin-bottom:0.3rem;">Analisis BESTARIL</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:0.6rem; letter-spacing:0.2em; text-transform:uppercase; color:#64748b; margin-bottom:0.3rem;">Analisis NIVA-BOO</div>
             <div style="font-size:1rem; font-weight:600; color:{result_color};">{result_text}</div>
             <div style="font-size:0.7rem; color:#64748b; margin-top:0.2rem;">Confidence: {conf_display}%</div>
         </div>
