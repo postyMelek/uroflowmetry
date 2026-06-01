@@ -1,0 +1,24 @@
+{
+  "model_name": "Model C-ResNet (ResNet1D + Tab + Cli Full)",
+  "mode": "C_resnet",
+  "n_epochs": 70,
+  "lr": 0.0005,
+  "dropout": 0.3,
+  "tabular_features": [
+    "Qmax_ml_s",
+    "Qave_ml_s",
+    "Voided_Volume_ml",
+    "PVR_ml",
+    "Flow_Time_s",
+    "Time_to_Max_Flow_s"
+  ],
+  "clinical_features": [],
+  "n_cli": null,
+  "label_map": {
+    "0": "Non-BOO (DU)",
+    "1": "BOO"
+  },
+  "input_length": 280,
+  "description": "BOO binary detection \u2014 Model C-ResNet (ResNet1D + Tab + Cli Full)",
+  "youden_threshold": 0.5346720814704895
+}

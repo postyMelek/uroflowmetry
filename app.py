@@ -20,8 +20,10 @@ st.set_page_config(
 
 sys.path.insert(0, str(Path(__file__).parent))
 from utils.waveform_extractor import extract_from_dta, extract_from_pdf, get_waveform_source_label
-from utils.predictor import predict, determine_model_route
-
+from utils.predictor import predict, determine_model_route, load_model, get_attention_weights
+from utils.audit_logger import log_prediction, load_audit_log
+import pandas as pd
+from scipy.signal import resample
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS — Light Theme, Clean Medical Design
 # ─────────────────────────────────────────────────────────────────────────────
@@ -178,12 +180,13 @@ with st.sidebar:
     st.markdown('<div style="font-family:\'Fira Code\',monospace; font-size:0.58rem; letter-spacing:0.22em; text-transform:uppercase; color:#7090b8; margin:1.5rem 0 0.7rem; padding-bottom:0.4rem; border-bottom:1px solid rgba(255,255,255,0.08);">Model Override</div>', unsafe_allow_html=True)
     model_override = st.selectbox(
         "Paksa pakai model tertentu",
-        ["Auto (Rekomendasi)", "Model C — Klinis Lengkap", "Model D — Klinis Ringkas", "Model A — Waveform Only"],
+        ["Auto (Rekomendasi)", "Model CR — ResNet1D (Primary)", "Model C — Klinis Lengkap", "Model D — Klinis Ringkas", "Model A — Waveform Only"],
     )
     model_key_override = None
-    if   "Model C" in model_override: model_key_override = 'C'
-    elif "Model D" in model_override: model_key_override = 'D'
-    elif "Model A" in model_override: model_key_override = 'A'
+    if   "Model CR" in model_override: model_key_override = 'CR'
+    elif "Model C"  in model_override: model_key_override = 'C'
+    elif "Model D"  in model_override: model_key_override = 'D'
+    elif "Model A"  in model_override: model_key_override = 'A'
 
     st.markdown("---")
     st.markdown("""
@@ -218,7 +221,7 @@ st.markdown("""
                      background:#e6f6f3; border:1.5px solid #0d8a74; border-radius:20px;
                      font-size:0.65rem; letter-spacing:0.08em; text-transform:uppercase; color:#0d8a74;
                      font-family:'Fira Code',monospace; font-weight:500;">
-                    ● NIVA Engine v2.0 &middot; Model C (AUC 0.856) Primary
+                    ● NIVA Engine v2.0 &middot; Model CR-ResNet (AUC 0.867 · Spec 1.000) Primary
                 </span>
             </div>
         </div>
@@ -439,13 +442,21 @@ with col_ipss:
 
     route = model_key_override if model_key_override else determine_model_route(ufm_preview, cli_preview, {})
 
-    route_desc   = {'A': "Model A — Waveform Only", 'C': "Model C — Klinis Lengkap", 'D': "Model D — Klinis Ringkas"}
-    route_detail = {'A': "Akurasi rendah. Gunakan jika tidak ada data klinis.",
-                    'C': "AUC 0.856 CV · 0.812 External. Rekomendasi utama.",
-                    'D': "AUC 0.838 CV. Fallback jika data klinis tidak lengkap."}
-    route_color  = {'A': "#c0392b", 'C': "#1a5fa8", 'D': "#0d8a74"}
-    route_bg     = {'A': "#fdecea", 'C': "#e8f1fb", 'D': "#e6f6f3"}
-    route_bd     = {'A': "#f5c6c2", 'C': "#b8d2f0", 'D': "#86d4c6"}
+    route_desc   = {
+        'A':  "Model A — Waveform Only",
+        'C':  "Model C — Klinis Lengkap",
+        'CR': "Model CR — ResNet1D (Primary)",
+        'D':  "Model D — Klinis Ringkas"
+    }
+    route_detail = {
+        'A':  "Akurasi rendah. Gunakan jika tidak ada data klinis.",
+        'C':  "AUC 0.871 CV · 0.656 External. Fallback jika CR tidak tersedia.",
+        'CR': "AUC 0.867 CV · 0.750 External · Spesifisitas 1.000. Rekomendasi utama.",
+        'D':  "AUC 0.815 CV. Fallback jika data klinis tidak lengkap."
+    }
+    route_color  = {'A': "#c0392b", 'C': "#1a5fa8", 'CR': "#6d28d9", 'D': "#0d8a74"}
+    route_bg     = {'A': "#fdecea", 'C': "#e8f1fb", 'CR': "#f5f3ff",  'D': "#e6f6f3"}
+    route_bd     = {'A': "#f5c6c2", 'C': "#b8d2f0", 'CR': "#c4b5fd",  'D': "#86d4c6"}
 
     st.markdown(f"""
 <div style="background:{route_bg[route]}; border:1.5px solid {route_bd[route]}; border-radius:10px; padding:0.8rem 1rem;">
@@ -510,6 +521,13 @@ if run_analysis and waveform_ready:
             st.error(f"❌ Error saat analisis: {e}")
             st.stop()
 
+    # ── Audit Log ─────────────────────────────────────────────────────────
+    prediction_id = log_prediction(
+        boo_probability=result['prob_boo'],
+        model_version=f"{result['model_used']}_{result['threshold']:.3f}",
+        input_data={"ufm": ufm_params, "clinical_keys": list(clinical_full.keys())},
+    )
+    
     prob_pct   = result['prob_boo'] * 100
     pred_boo   = result['pred_boo']
     conf       = result['confidence']
@@ -560,7 +578,25 @@ if run_analysis and waveform_ready:
     # Warning jika data klinis kosong
     if model_key == 'C' and sc_storage == 0 and sc_voiding == 0 and sc_qol == 0 and np.isnan(vol_prostat):
         st.markdown('<div style="background:#fff7ed; border:1.5px solid #fed7aa; border-radius:10px; padding:0.8rem 1rem; font-size:0.8rem; color:#b45309; margin-bottom:1rem;">⚠️ <b>Data klinis belum diisi.</b> Skor IPSS dan volume prostat masih kosong. Lengkapi data klinis untuk prediksi bermakna.</div>', unsafe_allow_html=True)
-
+    # ── Confidence Safeguard (0.40–0.60) ─────────────────────────────────
+    if 0.40 <= result['prob_boo'] <= 0.60:
+        st.markdown(f"""
+        <div style="background:#fef3c7; border:2px solid #f59e0b; border-radius:14px; padding:1.2rem 1.5rem; margin-bottom:1.2rem;">
+            <div style="display:flex; align-items:flex-start; gap:0.8rem;">
+                <div style="font-size:1.5rem; flex-shrink:0;">⚠️</div>
+                <div>
+                    <div style="font-family:'Libre Baskerville',serif; font-size:1.05rem; color:#92400e; font-weight:700; margin-bottom:0.4rem;">
+                        Hasil Tidak Konklusif — Zona Ketidakpastian
+                    </div>
+                    <div style="font-size:0.82rem; color:#78350f; line-height:1.65;">
+                        Probabilitas BOO ({result['prob_boo']:.1%}) berada di rentang 0,40–0,60 di mana model tidak dapat memberikan
+                        rekomendasi definitif. <b>Disarankan konfirmasi dengan pemeriksaan urodinamik (PFS/UDS)</b> sebelum
+                        keputusan klinis diambil.
+                    </div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     # ── Header Hasil ─────────────────────────────────────────────────────────
     st.markdown(f"""
 <div style="background:#ffffff; border:1.5px solid #d1d9e6; border-radius:16px;
@@ -682,6 +718,173 @@ if run_analysis and waveform_ready:
     </div>
 </div>
 """, unsafe_allow_html=True)
+    
+    # ─────────────────────────────────────────────────────────────────────
+    # XAI — Explainability Section
+    # ─────────────────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("""
+<div style="display:flex; align-items:center; gap:0.6rem; margin-bottom:1rem;">
+    <div style="width:4px; height:28px; background:linear-gradient(180deg,#6d28d9,#a78bfa); border-radius:4px;"></div>
+    <div style="font-family:'Libre Baskerville',serif; font-size:1.2rem; color:#1a2233; font-weight:700;">
+        Penjelasan Prediksi (Explainable AI)
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+    tab_attn, tab_feat, tab_audit = st.tabs([
+        "📈 Fokus Waveform (Attention)",
+        "📊 Kontribusi Fitur Klinis",
+        "🗂️ Audit Log"
+    ])
+
+    with tab_attn:
+        st.markdown("""
+<div style="font-size:0.78rem; color:#4a5568; margin-bottom:0.5rem;">
+    Area merah menunjukkan segmen waveform yang paling diperhatikan model saat membuat prediksi.
+    Ini bukan penilaian klinis absolut, melainkan indikasi area sinyal yang paling informatif bagi model.
+</div>
+""", unsafe_allow_html=True)
+        try:
+            model_obj, _, _ = load_model(model_key)
+            attn_weights = get_attention_weights(model_obj, waveform_data)
+
+            attn_full = resample(attn_weights, len(waveform_data))
+            attn_full = np.clip(attn_full, 0, None)
+            attn_full /= (attn_full.sum() + 1e-8)
+
+            fig_attn, (ax_wave, ax_bar) = plt.subplots(2, 1, figsize=(10, 4.5),
+                                                         gridspec_kw={'height_ratios': [3, 1]})
+            fig_attn.patch.set_facecolor('#ffffff')
+
+            t_axis = np.arange(len(waveform_data))
+            norm_attn = attn_full / (attn_full.max() + 1e-8)
+
+            ax_wave.set_facecolor('#f5f7fa')
+            ax_wave.plot(t_axis, waveform_data, color='#1a5fa8', linewidth=1.8, label='Flow Rate')
+            for i in range(len(t_axis) - 1):
+                alpha = float(norm_attn[i]) * 0.6
+                ax_wave.axvspan(t_axis[i], t_axis[i+1], alpha=alpha, color='#EF4444')
+            ax_wave.set_ylabel("Flow Rate (normalized)", fontsize=9)
+            ax_wave.set_xlim(t_axis[0], t_axis[-1])
+            ax_wave.set_ylim(-0.05, 1.05)
+            ax_wave.set_xticks([])
+            ax_wave.legend(fontsize=8, loc='upper right')
+            for sp in ax_wave.spines.values(): sp.set_color('#d1d9e6')
+
+            ax_bar.set_facecolor('#f5f7fa')
+            ax_bar.bar(t_axis, attn_full, width=1, color='#EF4444', alpha=0.7)
+            ax_bar.set_xlabel("Sample Index (280 titik)", fontsize=9)
+            ax_bar.set_ylabel("Attention", fontsize=8)
+            ax_bar.set_xlim(t_axis[0], t_axis[-1])
+            for sp in ax_bar.spines.values(): sp.set_color('#d1d9e6')
+
+            plt.tight_layout()
+            st.pyplot(fig_attn, use_container_width=True)
+            plt.close()
+        except Exception as e:
+            st.info(f"Visualisasi attention tidak tersedia: {e}")
+
+    with tab_feat:
+        st.markdown("""
+<div style="font-size:0.78rem; color:#4a5568; margin-bottom:0.5rem;">
+    Kontribusi relatif fitur klinis dan UFM terhadap prediksi BOO, berdasarkan analisis
+    <i>feature importance</i> dan SHAP pada data training. Merah = meningkatkan probabilitas BOO,
+    biru = menurunkan probabilitas BOO.
+</div>
+""", unsafe_allow_html=True)
+
+        feature_importance = {
+            "Skor Voiding": 0.347,
+            "Skor Storage": 0.143,
+            "Total skor IPSS": 0.096,
+            "Usia": 0.064,
+            "Volume Prostat": 0.053,
+            "Qmax (ml/s)": 0.048,
+            "Flow Time (s)": 0.048,
+            "Qave (ml/s)": 0.047,
+        }
+
+        patient_values = {
+            "Skor Voiding": sc_voiding,
+            "Skor Storage": sc_storage,
+            "Total skor IPSS": total_ipss,
+            "Usia": usia,
+            "Volume Prostat": vol_prostat if not np.isnan(vol_prostat) else None,
+            "Qmax (ml/s)": qmax,
+            "Flow Time (s)": ft,
+            "Qave (ml/s)": qave,
+        }
+
+        features = list(feature_importance.keys())
+        importances = list(feature_importance.values())
+        colors = ['#EF4444' if imp > 0.06 else '#3B82F6' for imp in importances]
+
+        fig_feat, ax_feat = plt.subplots(figsize=(9, 4.5))
+        fig_feat.patch.set_facecolor('#ffffff')
+        ax_feat.set_facecolor('#f5f7fa')
+
+        bars = ax_feat.barh(features[::-1], importances[::-1],
+                            color=colors[::-1], height=0.6, edgecolor='white')
+
+        for bar, feat in zip(bars, features[::-1]):
+            val = patient_values.get(feat)
+            val_str = f" (pasien: {val})" if val is not None else ""
+            ax_feat.text(bar.get_width() + 0.005, bar.get_y() + bar.get_height()/2,
+                        f"{bar.get_width():.3f}{val_str}",
+                        va='center', fontsize=8, color='#4a5568')
+
+        ax_feat.set_xlabel("Feature Importance (Random Forest + SHAP)", fontsize=9)
+        ax_feat.set_title("Kontribusi Fitur terhadap Prediksi BOO", fontsize=11, fontweight='bold')
+        ax_feat.axvline(0, color='#6B7280', linewidth=0.5, linestyle='--')
+        for sp in ax_feat.spines.values(): sp.set_color('#d1d9e6')
+        plt.tight_layout()
+        st.pyplot(fig_feat, use_container_width=True)
+        plt.close()
+
+        st.markdown("""
+<div style="background:#f5f3ff; border:1.5px solid #c4b5fd; border-radius:10px; padding:0.8rem 1rem;
+     font-size:0.75rem; color:#5b21b6; margin-top:0.5rem;">
+    📌 <b>Catatan:</b> Feature importance dihitung dari analisis Random Forest dan SHAP pada data training (n=199).
+    Nilai pasien ditampilkan sebagai konteks, bukan sebagai kontribusi SHAP individual per prediksi.
+</div>
+""", unsafe_allow_html=True)
+
+    with tab_audit:
+        st.markdown("""
+<div style="font-size:0.78rem; color:#4a5568; margin-bottom:0.5rem;">
+    Log prediksi bersifat <i>append-only</i> dan tidak dapat dimodifikasi. Setiap prediksi tercatat
+    dengan ID unik, timestamp, dan hash data input untuk keperluan audit.
+</div>
+""", unsafe_allow_html=True)
+
+        st.markdown(f"""
+<div style="background:#dcfce7; border:1.5px solid #86efac; border-radius:10px; padding:0.7rem 1rem;
+     font-size:0.78rem; color:#166534; margin-bottom:0.8rem;">
+    ✅ Prediksi ini tercatat — ID: <code>{prediction_id[:12]}...</code>
+</div>
+""", unsafe_allow_html=True)
+
+        logs = load_audit_log()
+        if logs:
+            df_log = pd.DataFrame(logs[-30:])
+            df_log['prediction_id'] = df_log['prediction_id'].str[:12] + "..."
+            df_log['timestamp'] = pd.to_datetime(df_log['timestamp']).dt.strftime('%Y-%m-%d %H:%M')
+            display_cols = ['timestamp', 'prediction_id', 'boo_label',
+                           'boo_probability', 'confidence_zone', 'model_version']
+            available_cols = [c for c in display_cols if c in df_log.columns]
+            st.dataframe(df_log[available_cols], use_container_width=True, hide_index=True)
+        else:
+            st.info("Belum ada log prediksi sebelumnya.")
+
+        st.markdown("""
+<div style="font-size:0.68rem; color:#8a9bb0; margin-top:0.5rem; font-family:'Fira Code',monospace;">
+    ⚕️ Output ini bersifat decision support. Keputusan klinis tetap tanggung jawab dokter spesialis.
+</div>
+""", unsafe_allow_html=True)
+
+
+
 
     if model_key == 'A':
         st.markdown("""

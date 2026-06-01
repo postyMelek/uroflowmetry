@@ -84,6 +84,7 @@ class WaveEncoderResidual(nn.Module):
         x = self.stem(x); x = self.stage1(x); x = self.stage2(x)
         fm = self.stage3(x)
         aw = torch.softmax(self.attn(fm), dim=-1)
+        self.last_attention = aw
         return self.proj((fm * aw).sum(dim=-1))
 
 
@@ -125,7 +126,64 @@ class ModelD(nn.Module):
     def forward(self, w, t, c):
         return self.head(self.fusion(torch.cat([self.wave(w), self.tab(t), self.cli(c)], dim=1)))
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MODEL C-RESNET ARCHITECTURE (ResNet1D — terpisah dari WaveEncoderResidual)
+# ─────────────────────────────────────────────────────────────────────────────
 
+class ResNetBlock1D(nn.Module):
+    """ResNet block untuk C-ResNet — berbeda dari ResidualBlock1d yang ada."""
+    def __init__(self, in_ch, out_ch, kernel=5):
+        super().__init__()
+        pad = kernel // 2
+        self.conv = nn.Sequential(
+            nn.Conv1d(in_ch, out_ch, kernel, padding=pad),
+            nn.BatchNorm1d(out_ch), nn.ReLU(),
+            nn.Conv1d(out_ch, out_ch, kernel, padding=pad),
+            nn.BatchNorm1d(out_ch)
+        )
+        self.skip = nn.Conv1d(in_ch, out_ch, 1) if in_ch != out_ch else nn.Identity()
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        return self.relu(self.conv(x) + self.skip(x))
+
+
+class ResNetWaveEncoder(nn.Module):
+    """ResNet1D wave encoder untuk Model C-ResNet."""
+    def __init__(self, dropout=0.3):
+        super().__init__()
+        self.blocks = nn.Sequential(
+            ResNetBlock1D(1, 64, 7),    nn.MaxPool1d(2),
+            ResNetBlock1D(64, 128, 5),  nn.MaxPool1d(2),
+            ResNetBlock1D(128, 256, 3), nn.MaxPool1d(2),
+        )
+        self.attn = nn.Sequential(nn.Conv1d(256, 64, 1), nn.Tanh(), nn.Conv1d(64, 1, 1))
+        self.proj = nn.Sequential(nn.Linear(256, 128), nn.ReLU(), nn.Dropout(dropout))
+
+    def forward(self, x):
+        x = x.unsqueeze(1)
+        fm = self.blocks(x)
+        aw = torch.softmax(self.attn(fm), dim=-1)
+        self.last_attention = aw
+        return self.proj((fm * aw).sum(dim=-1))
+
+
+class ModelCResNet(nn.Module):
+    """Model C-ResNet: ResNet1D + UFM + Clinical Full (10 fitur)."""
+    def __init__(self, dropout=0.3, n_cli=10):
+        super().__init__()
+        self.wave   = ResNetWaveEncoder(dropout)
+        self.tab    = nn.Sequential(nn.Linear(6, 32), nn.BatchNorm1d(32), nn.ReLU(),
+                                    nn.Dropout(dropout), nn.Linear(32, 16), nn.ReLU())
+        self.cli    = nn.Sequential(nn.Linear(n_cli, 32), nn.BatchNorm1d(32), nn.ReLU(),
+                                    nn.Dropout(dropout), nn.Linear(32, 16), nn.ReLU())
+        self.fusion = nn.Sequential(nn.Linear(160, 64), nn.ReLU(), nn.Dropout(dropout))
+        self.head   = nn.Sequential(nn.Linear(64, 32), nn.ReLU(), nn.Linear(32, 2))
+
+    def forward(self, w, t, c):
+        return self.head(self.fusion(
+            torch.cat([self.wave(w), self.tab(t), self.cli(c)], dim=1)
+        ))
 # ─────────────────────────────────────────────────────────────────────────────
 # SCALER — JSON based (version-agnostic, no pickle)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -158,8 +216,8 @@ def _load_scalers_from_json(model_key: str) -> dict:
     Load scaler params dari JSON — tidak ada sklearn dependency.
     Return dict: {'tab': JsonScaler, 'cli': JsonScaler}
     """
-    key      = model_key.lower()
-    json_path = MODELS_DIR / f"model_{key}_scaler_params.json"
+    prefix    = _FILE_PREFIX.get(model_key.upper(), model_key.lower())
+    json_path = MODELS_DIR / f"model_{prefix}_scaler_params.json"
 
     if not json_path.exists():
         # Fallback: coba load dari pkl (untuk backward compat)
@@ -178,20 +236,18 @@ def _load_scalers_from_json(model_key: str) -> dict:
     logger.info(f"Scalers loaded from JSON for Model {model_key}: {list(scalers.keys())}")
     return scalers
 
-
 def _load_scalers_from_pkl(model_key: str) -> dict:
     """Fallback: load dari pickle (bisa error jika versi sklearn berbeda)."""
     import pickle
-    key      = model_key.lower()
-    pkl_path = MODELS_DIR / f"model_{key}_scaler_v2.pkl"
-
+    prefix   = _FILE_PREFIX.get(model_key.upper(), model_key.lower())
+    pkl_path = MODELS_DIR / f"model_{prefix}_scaler_v2.pkl"
     if not pkl_path.exists():
-        pkl_path = MODELS_DIR / f"model_{key}_scaler.pkl"
+        pkl_path = MODELS_DIR / f"model_{prefix}_scaler.pkl"
 
     if not pkl_path.exists():
         raise FileNotFoundError(
             f"Scaler untuk Model {model_key} tidak ditemukan.\n"
-            f"Cari: {MODELS_DIR}/model_{key}_scaler_params.json (JSON) atau _scaler_v2.pkl"
+            f"Cari: {MODELS_DIR}/model_{prefix}_scaler_params.json (JSON) atau _scaler_v2.pkl"
         )
 
     with open(pkl_path, 'rb') as f:
@@ -213,30 +269,35 @@ def _load_scalers_from_pkl(model_key: str) -> dict:
 # LOAD MODEL
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Mapping model key → filename prefix
+_FILE_PREFIX = {'A': 'a', 'B': 'b', 'C': 'c', 'D': 'd', 'CR': 'c_resnet'}
+
+
 def load_model(model_key: str):
-    key      = model_key.lower()
-    pt_path  = MODELS_DIR / f"model_{key}_locked_v2.pt"
-    cfg_path = MODELS_DIR / f"model_{key}_config_v2.json"
+    key      = model_key.upper()
+    prefix   = _FILE_PREFIX.get(key, key.lower())
+    pt_path  = MODELS_DIR / f"model_{prefix}_locked_v2.pt"
+    cfg_path = MODELS_DIR / f"model_{prefix}_config_v2.json"
 
     if not pt_path.exists():
-        pt_path  = MODELS_DIR / f"model_{key}_locked.pt"
-        cfg_path = MODELS_DIR / f"model_{key}_config.json"
+        pt_path  = MODELS_DIR / f"model_{prefix}_locked.pt"
+        cfg_path = MODELS_DIR / f"model_{prefix}_config.json"
 
     if not pt_path.exists():
         raise FileNotFoundError(
             f"Model {model_key} tidak ditemukan di {MODELS_DIR}\n"
-            f"Pastikan model_{key}_locked_v2.pt ada di folder models/"
+            f"Pastikan model_{prefix}_locked_v2.pt ada di folder models/"
         )
 
     with open(cfg_path) as f:
         config = json.load(f)
 
-    # Load scalers dari JSON (no sklearn version issue)
     scalers = _load_scalers_from_json(model_key)
 
-    if   model_key == 'A': model = ModelA()
-    elif model_key == 'C': model = ModelC(n_cli=len(CLINICAL_FEATURES_FULL))
-    elif model_key == 'D': model = ModelD(n_cli_red=len(CLINICAL_FEATURES_REDUCED))
+    if   key == 'A':  model = ModelA()
+    elif key == 'C':  model = ModelC(n_cli=len(CLINICAL_FEATURES_FULL))
+    elif key == 'D':  model = ModelD(n_cli_red=len(CLINICAL_FEATURES_REDUCED))
+    elif key == 'CR': model = ModelCResNet(n_cli=len(CLINICAL_FEATURES_FULL))
     else: raise ValueError(f"Unknown model key: {model_key}")
 
     state = torch.load(pt_path, map_location=device, weights_only=True)
@@ -297,13 +358,13 @@ def predict(waveform, ufm_params, clinical_full, model_key=None):
     Xw = waveform.reshape(1, -1).astype(np.float32)
 
     Xt = None
-    if model_key in ('B', 'C', 'D'):
+    if model_key in ('B', 'C', 'D','CR'):
         tab_arr = np.array([ufm_params.get(f, np.nan) for f in TABULAR_FEATURES],
                            dtype=np.float32).reshape(1, -1)
         Xt = scalers['tab'].transform(tab_arr)
 
     Xc = None
-    if model_key == 'C':
+    if model_key in ('C', 'CR'):    
         cli_arr = np.array([clinical_full.get(f, np.nan) for f in CLINICAL_FEATURES_FULL],
                            dtype=np.float32).reshape(1, -1)
         Xc = scalers['cli'].transform(cli_arr)
@@ -355,6 +416,7 @@ def predict(waveform, ufm_params, clinical_full, model_key=None):
         "model_used":              f"Model {model_key}",
         "model_description":       {'A': "Waveform Only",
                                     'C': "Waveform + UFM + Klinis Lengkap",
+                                    'CR': "ResNet1D + UFM + Klinis Lengkap",
                                     'D': "Waveform + UFM + Klinis Ringkas (5 fitur)"}[model_key],
         "prob_boo":                prob_boo,
         "pred_boo":                pred_boo,
@@ -367,6 +429,16 @@ def predict(waveform, ufm_params, clinical_full, model_key=None):
         "clinical_recommendation": rec,
         "clinical_detail":         det,
         "model_key":               model_key,
-        "model_auc_cv":            {"A": 0.52, "C": 0.836, "D": 0.873}[model_key],
-        "model_auc_ext":           {"A": 0.44, "C": 0.828, "D": 0.703}[model_key],
+        "model_auc_cv":            {"A": 0.449, "C": 0.871, "CR": 0.867, "D": 0.815}[model_key],
+        "model_auc_ext":           {"A": 0.375, "C": 0.656, "CR": 0.750, "D": 0.562}[model_key],
     }
+
+def get_attention_weights(model, waveform):
+    """Extract attention weights dari model setelah forward pass."""
+    model.eval()
+    w = torch.tensor(waveform.reshape(1, -1), dtype=torch.float32).to(device)
+    encoder = model.wave if hasattr(model, 'wave') else model.enc
+    with torch.no_grad():
+        _ = encoder(w)
+    attn = encoder.last_attention.squeeze().cpu().numpy()
+    return attn / (attn.sum() + 1e-8)
